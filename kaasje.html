@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kaasje Spel</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #87CEEB;
+            font-family: Arial, sans-serif;
+            touch-action: none;
+        }
+        
+        #gameContainer {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        canvas {
+            border: 3px solid #333;
+            background-color: #90EE90;
+            display: block;
+            margin: 0 auto;
+            max-width: 100%;
+            height: auto;
+        }
+        
+        #scores {
+            display: flex;
+            justify-content: space-around;
+            margin: 10px auto;
+            max-width: 400px;
+        }
+        
+        .scoreBox {
+            background-color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        .scoreLabel {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .scoreValue {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        #gameOver {
+            display: none;
+            font-size: 32px;
+            color: red;
+            margin: 20px;
+        }
+        
+        #powerUpInfo {
+            margin: 10px;
+            font-size: 16px;
+            min-height: 25px;
+            color: #333;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="scores">
+            <div class="scoreBox">
+                <div class="scoreLabel">Score</div>
+                <div class="scoreValue" id="score">0</div>
+            </div>
+            <div class="scoreBox">
+                <div class="scoreLabel">Highscore</div>
+                <div class="scoreValue" id="highscore">0</div>
+            </div>
+        </div>
+        <div id="powerUpInfo"></div>
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+        <div id="gameOver">Game Over! Klik om opnieuw te spelen</div>
+    </div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Highscore ophalen uit browser opslag (localStorage)
+        let highscore = localStorage.getItem('kaasjeHighscore') || 0;
+        document.getElementById('highscore').textContent = highscore;
+        
+        // Spel variabelen
+        let bal = {
+            x: 200,
+            y: 50,
+            radius: 15,
+            snelheid: 3,
+            normaleSnelheid: 3  // We onthouden de normale snelheid
+        };
+        
+        let gat = {
+            x: 150,
+            y: 500,
+            breedte: 80,
+            hoogte: 20
+        };
+        
+        let score = 0;
+        let spelActief = true;
+        
+        // Power-up variabelen
+        let powerUps = [];  // Lijst met alle power-ups op het scherm
+        let slowModeActief = false;
+        let slowModeTimer = 0;
+        
+        // Maak een nieuwe power-up aan
+        function maakPowerUp() {
+            // 30% kans op een power-up bij elke nieuwe bal
+            if (Math.random() < 0.3) {
+                let type = Math.random() < 0.5 ? 'punten' : 'slow';
+                powerUps.push({
+                    x: Math.random() * (canvas.width - 40) + 20,
+                    y: 50,
+                    radius: 12,
+                    snelheid: 2,
+                    type: type  // 'punten' of 'slow'
+                });
+            }
+        }
+        
+        // Teken alle power-ups
+        function tekenPowerUps() {
+            powerUps.forEach(powerUp => {
+                // Teken een ster
+                ctx.save();
+                ctx.translate(powerUp.x, powerUp.y);
+                
+                // Kleur afhankelijk van type
+                if (powerUp.type === 'punten') {
+                    ctx.fillStyle = '#FFD700';  // Goud voor punten
+                    ctx.strokeStyle = '#FFA500';
+                } else {
+                    ctx.fillStyle = '#4169E1';  // Blauw voor slow
+                    ctx.strokeStyle = '#1E90FF';
+                }
+                
+                // Teken een 5-puntige ster
+                ctx.beginPath();
+                for (let i = 0; i < 5; i++) {
+                    let angle = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+                    let x = Math.cos(angle) * powerUp.radius;
+                    let y = Math.sin(angle) * powerUp.radius;
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                ctx.restore();
+            });
+        }
+        
+        // Update power-ups
+        function updatePowerUps() {
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                let powerUp = powerUps[i];
+                powerUp.y += powerUp.snelheid;
+                
+                // Check of power-up gevangen is
+                if (powerUp.y + powerUp.radius >= gat.y) {
+                    if (powerUp.x > gat.x && powerUp.x < gat.x + gat.breedte) {
+                        // Gevangen!
+                        if (powerUp.type === 'punten') {
+                            score += 5;
+                            updateScore();
+                            toonPowerUpBericht('🌟 +5 punten!');
+                        } else {
+                            activeerSlowMode();
+                            toonPowerUpBericht('⭐ Slow mode!');
+                        }
+                        powerUps.splice(i, 1);
+                    } else if (powerUp.y > canvas.height) {
+                        // Gemist, verwijder
+                        powerUps.splice(i, 1);
+                    }
+                }
+            }
+            
+            // Update slow mode timer
+            if (slowModeActief) {
+                slowModeTimer--;
+                if (slowModeTimer <= 0) {
+                    deactiveerSlowMode();
+                }
+            }
+        }
+        
+        // Activeer slow mode
+        function activeerSlowMode() {
+            slowModeActief = true;
+            slowModeTimer = 180;  // 3 seconden bij 60 FPS
+            bal.snelheid = bal.snelheid / 2;
+        }
+        
+        // Deactiveer slow mode
+        function deactiveerSlowMode() {
+            slowModeActief = false;
+            bal.snelheid = bal.normaleSnelheid;
+            document.getElementById('powerUpInfo').textContent = '';
+        }
+        
+        // Toon power-up bericht
+        function toonPowerUpBericht(tekst) {
+            document.getElementById('powerUpInfo').textContent = tekst;
+            setTimeout(() => {
+                if (!slowModeActief) {
+                    document.getElementById('powerUpInfo').textContent = '';
+                }
+            }, 2000);
+        }
+        
+        // Update de score en highscore
+        function updateScore() {
+            document.getElementById('score').textContent = score;
+            
+            if (score > highscore) {
+                highscore = score;
+                document.getElementById('highscore').textContent = highscore;
+                // Sla highscore op in browser
+                localStorage.setItem('kaasjeHighscore', highscore);
+            }
+        }
+        
+        // Mouse control
+        canvas.addEventListener('mousemove', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            gat.x = e.clientX - rect.left - gat.breedte / 2;
+        });
+        
+        // Touch control voor mobiel
+        canvas.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0];
+            gat.x = touch.clientX - rect.left - gat.breedte / 2;
+        });
+        
+        // Teken de bal
+        function tekenBal() {
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath();
+            ctx.arc(bal.x, bal.y, bal.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#FFA500';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        
+        // Teken het gat
+        function tekenGat() {
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(gat.x, gat.y, gat.breedte, gat.hoogte);
+        }
+        
+        // Update de bal positie
+        function updateBal() {
+            bal.y += bal.snelheid;
+            
+            // Check of de bal bij het gat is
+            if (bal.y + bal.radius >= gat.y) {
+                if (bal.x > gat.x && bal.x < gat.x + gat.breedte) {
+                    // Gelukt! Punt erbij
+                    score++;
+                    updateScore();
+                    bal.y = 50;
+                    bal.x = Math.random() * (canvas.width - 40) + 20;
+                    bal.normaleSnelheid += 0.2;
+                    if (!slowModeActief) {
+                        bal.snelheid = bal.normaleSnelheid;
+                    }
+                    
+                    // Misschien een power-up maken
+                    maakPowerUp();
+                } else {
+                    // Gemist! Game over
+                    spelActief = false;
+                    document.getElementById('gameOver').style.display = 'block';
+                }
+            }
+        }
+        
+        // Hoofdloop van het spel
+        function gameLoop() {
+            if (!spelActief) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            tekenBal();
+            tekenGat();
+            tekenPowerUps();
+            
+            updateBal();
+            updatePowerUps();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start het spel opnieuw
+        canvas.addEventListener('click', function() {
+            if (!spelActief) {
+                spelActief = true;
+                score = 0;
+                powerUps = [];
+                slowModeActief = false;
+                bal.y = 50;
+                bal.snelheid = 3;
+                bal.normaleSnelheid = 3;
+                updateScore();
+                document.getElementById('gameOver').style.display = 'none';
+                document.getElementById('powerUpInfo').textContent = '';
+                gameLoop();
+            }
+        });
+        
+        // Start het spel!
+        gameLoop();
+    </script>
+</body>
+</html>
